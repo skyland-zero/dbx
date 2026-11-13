@@ -73,15 +73,19 @@ impl WebState {
         self.sse_channels.write().await.remove(id);
     }
 
-    /// Test helper: full field set so new WebState fields don't break scattered test fixtures.
-    #[cfg(test)]
-    pub fn for_tests(app: Arc<AppState>, data_dir: PathBuf) -> Self {
+    /// The state of an embedding desktop app (see [`crate::build_local_state`]):
+    /// no login, full field set like [`Self::for_tests`].
+    ///
+    /// `password_viewer_enabled` is true: the router has no network client, and
+    /// the desktop app already shows saved passwords it reads from the OS
+    /// keychain. The web deployment keeps them redacted.
+    pub fn local(app: Arc<AppState>, data_dir: PathBuf) -> Self {
         Self {
             app,
             data_dir,
             notes_roots: Vec::new(),
             public_base_path: "/".to_string(),
-            password_disabled: false,
+            password_disabled: true,
             password_viewer_enabled: true,
             demo_mode: false,
             password_hash: RwLock::new(None),
@@ -102,5 +106,14 @@ impl WebState {
             migration_ready: Arc::new(AtomicBool::new(true)),
             web_mcp: Arc::new(crate::web_mcp::WebMcpRuntime::disabled()),
         }
+    }
+
+    /// Test helper: full field set so new WebState fields don't break scattered test fixtures.
+    #[cfg(test)]
+    pub fn for_tests(app: Arc<AppState>, data_dir: PathBuf) -> Self {
+        let mut state = Self::local(app, data_dir);
+        state.password_disabled = false;
+        state.password_viewer_enabled = true;
+        state
     }
 }

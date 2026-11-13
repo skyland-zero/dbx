@@ -496,168 +496,12 @@ fn add_mq_routes(router: Router<Arc<WebState>>) -> Router<Arc<WebState>> {
     router
 }
 
-pub fn run() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if help_requested(&args) {
-        print!("{HELP_TEXT}");
-        return ExitCode::SUCCESS;
-    }
-
-    // The library entry point may run beside an embedding app's own subscriber;
-    // a second init is ignored rather than fatal.
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "dbx_web=info,tower_http=info".parse().unwrap()),
-        )
-        .try_init();
-
-    let runtime = dbx_core::scheduled_backup::worker_runtime().expect("Failed to build tokio runtime");
-    match runtime.block_on(serve()) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn web_mcp_startup_error(error: String) -> String {
-    format!("Failed to start DBX Web: invalid Web MCP configuration: {error}")
-}
-
-/// Serves DBX Web on `DBX_PORT` (default 4224) from `DBX_DATA_DIR`.
+/// The `/api` routes: every handler, behind the server's gates or none.
 ///
-/// Runs the server on the caller's runtime: an embedding app can start it in
-/// process and talk to it over loopback instead of shipping the `dbx-web`
-/// binary. Logging is the caller's business here; [`run`] installs one.
-pub async fn serve() -> Result<(), String> {
-    rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install rustls crypto provider");
-
-    // Data directory
-    let data_dir = std::env::var("DBX_DATA_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        std::path::PathBuf::from(home).join(".dbx-web")
-    });
-    std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
-
-    let app_state = {
-        let db_path = data_dir.join("dbx.db");
-        let storage = Storage::open_unmigrated(&db_path)
-            .await
-            .expect("Failed to open storage")
-            .with_secret_key_policy(SecretKeyPolicy::ManagedDataDir);
-
-        // Initialize core dialect registry and load external plugin dialects
-        register_core_dialects();
-        let registry = DialectRegistry::global();
-        let plugin_dirs = vec![data_dir.join("plugins").join("dialects")];
-        let load_result = DialectPluginLoader::scan_and_load(registry, &plugin_dirs);
-        log::info!(
-            "Dialect plugins loaded: {} success, {} errors, {} skipped",
-            load_result.loaded.len(),
-            load_result.errors.len(),
-            load_result.skipped.len()
-        );
-
-        // Start dialect YAML hot-reload watcher
-        let watch_dirs = plugin_dirs.clone();
-        tokio::spawn(async move {
-            if let Err(e) = DialectHotReload::run_forever(watch_dirs, DialectRegistry::global()).await {
-                log::error!("Dialect hot-reload watcher exited: {e}");
-            }
-        });
-        log::info!("Dialect hot-reload watcher started");
-
-        Arc::new(AppState::new_with_plugin_and_agent_dir_and_app_version(
-            storage,
-            data_dir.join("plugins"),
-            web_agent_dir(&data_dir),
-            env!("CARGO_PKG_VERSION"),
-        ))
-    };
-
-    app_state.set_honor_fixed_ssh_local_ports(true);
-
-    // Password hash: env var takes priority, then database
-    let password_disabled = std::env::var("DBX_DISABLE_PASSWORD")
-        .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false);
-    let password_viewer_enabled =
-        password_viewer_enabled_from_env(std::env::var("DBX_DISABLE_PASSWORD_VIEWER").ok().as_deref());
-
-    let password_hash = if password_disabled {
-        None
-    } else if let Ok(pw) = std::env::var("DBX_PASSWORD") {
-        let salt = SaltString::generate(&mut OsRng);
-        Some(Argon2::default().hash_password(pw.as_bytes(), &salt).expect("Failed to hash password").to_string())
-    } else {
-        app_state.storage.load_password_hash().await.unwrap_or(None)
-    };
-
-    let public_base_path = normalize_public_base_path(std::env::var("DBX_PUBLIC_BASE_PATH").ok());
-
-    // `DBX_WEB_CAPTCHA` pins the policy for managed deployments; otherwise the
-    // value saved from `设置 → 安全` wins, and `auto` is the default.
-    let captcha_env_raw = std::env::var("DBX_WEB_CAPTCHA").ok();
-    let captcha_env_locked = captcha_env_raw.as_deref().is_some_and(|raw| !raw.trim().is_empty());
-    let captcha_mode = match captcha_env_raw.as_deref().filter(|raw| !raw.trim().is_empty()) {
-        Some(raw) => captcha::CaptchaMode::parse(raw),
-        None => match app_state.storage.load_web_login_captcha_mode().await.unwrap_or(None).as_deref() {
-            Some(stored) => captcha::CaptchaMode::parse(stored),
-            None => captcha::CaptchaMode::Auto,
-        },
-    };
-
-    let demo_mode = demo::demo_mode_from_env();
-
-    let migration_ready = storage_migration_ready(&app_state).await;
-    let web_mcp = Arc::new(if migration_ready {
-        WebMcpRuntime::load(&app_state.storage, !password_disabled && password_hash.is_some())
-            .await
-            .map_err(web_mcp_startup_error)?
-    } else {
-        WebMcpRuntime::disabled()
-    });
-    let web_state = Arc::new(WebState {
-        app: app_state,
-        data_dir,
-        notes_roots: routes::docs::notes_roots_from_env(std::env::var_os("DBX_DOCS_NOTES_ROOTS").as_deref()),
-        public_base_path: public_base_path.clone(),
-        demo_mode,
-        password_disabled,
-        password_viewer_enabled,
-        password_hash: RwLock::new(password_hash),
-        sessions: RwLock::new(HashSet::new()),
-        sse_channels: RwLock::new(HashMap::new()),
-        transfer_progress_channels: RwLock::new(HashMap::new()),
-        table_import_channels: RwLock::new(HashMap::new()),
-        sql_file_executions: RwLock::new(HashMap::new()),
-        sql_file_failure_logs: Default::default(),
-        managed_sql_previews: Default::default(),
-        nacos_imports: RwLock::new(HashMap::new()),
-        login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit { fail_count: 0, locked_until: None }),
-        captchas: captcha::CaptchaStore::new(),
-        captcha_mode: tokio::sync::RwLock::new(captcha_mode),
-        captcha_env_locked,
-        export_files: RwLock::new(HashMap::new()),
-        ssh_prompts: Arc::new(ssh_prompt::SshPromptHub::new()),
-        migration_ready: Arc::new(AtomicBool::new(migration_ready)),
-        web_mcp,
-    });
-
-    ssh_prompt::install_web_ssh_prompt_bridge(web_state.ssh_prompts.clone());
-    routes::sql_file::start_sql_file_cleanup(&web_state);
-    routes::connection::start_connection_idle_sweeper(&web_state);
-
-    let backup_root = std::env::var_os("DBX_BACKUP_ROOT")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| web_state.data_dir.join("backups"));
-    std::fs::create_dir_all(&backup_root).expect("Failed to create server backup root");
-    let backup_service = routes::scheduled_backup::service(&web_state).expect("Failed to resolve server backup root");
-    let backup_stop = tokio_util::sync::CancellationToken::new();
-    let backup_worker = backup_service.start(backup_stop.clone());
-
+/// [`RouterMode::Local`] serves an embedding desktop app, which is the only
+/// user of its router: the migration, demo and login middlewares are left
+/// out there so a local request needs no cookie.
+fn api_router(web_state: &Arc<WebState>, mode: RouterMode) -> Router<Arc<WebState>> {
     // API routes
     let api = Router::new()
         .route("/migration/status", get(routes::migration::status))
@@ -1602,18 +1446,223 @@ pub async fn serve() -> Result<(), String> {
     let api =
         api.route("/query/build-duckdb-attach-database-sql", post(routes::query::build_duckdb_attach_database_sql));
 
-    let api = add_mq_routes(api)
-        .layer(middleware::from_fn_with_state(web_state.clone(), migration_gate))
-        .layer(middleware::from_fn_with_state(web_state.clone(), demo::demo_mode_gate))
-        .layer(middleware::from_fn_with_state(web_state.clone(), auth::auth_middleware))
-        .with_state(web_state.clone());
+    let api = add_mq_routes(api);
+    match mode {
+        RouterMode::Server => api
+            .layer(middleware::from_fn_with_state(web_state.clone(), migration_gate))
+            .layer(middleware::from_fn_with_state(web_state.clone(), demo::demo_mode_gate))
+            .layer(middleware::from_fn_with_state(web_state.clone(), auth::auth_middleware)),
+        RouterMode::Local => api,
+    }
+}
 
-    // Build app
-    let mut app = Router::new()
+
+/// Who a router serves: the standalone server, or an app that embeds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouterMode {
+    /// `dbx-web` as deployed: login, captcha, the migration and demo gates.
+    Server,
+    /// An embedding desktop app: this process is the only client, so the
+    /// `/api` routes answer without a session cookie.
+    Local,
+}
+
+/// Every `/api` route, ready to be served or called in process.
+///
+/// [`RouterMode::Local`] is what an embedding desktop app wants: the same
+/// handlers, no login gate.
+pub fn build_router(web_state: Arc<WebState>, mode: RouterMode) -> Router {
+    let api = api_router(&web_state, mode).with_state(web_state);
+    Router::new()
         .nest("/api", api)
         .layer(DefaultBodyLimit::max(web_body_limit_bytes()))
         .layer(CompressionLayer::new().compress_when(web_compression_predicate()))
-        .layer(tower_http::trace::TraceLayer::new_for_http());
+        .layer(tower_http::trace::TraceLayer::new_for_http())
+}
+
+/// The state of an embedding desktop app: the desktop store (`dbx.db`, whose
+/// secrets the OS keychain holds) and no web login.
+///
+/// The middleware's server-only tasks (dialect hot reload, the scheduled
+/// backup worker, the idle sweepers) start in [`serve`], not here.
+pub async fn build_local_state(data_dir: std::path::PathBuf) -> Result<Arc<WebState>, String> {
+    std::fs::create_dir_all(&data_dir).map_err(|error| format!("cannot create {}: {error}", data_dir.display()))?;
+    let storage = Storage::open_unmigrated(&data_dir.join("dbx.db"))
+        .await?
+        .with_desktop_credential_recovery();
+    register_core_dialects();
+    let app = Arc::new(AppState::new_with_plugin_and_agent_dir_and_app_version(
+        storage,
+        data_dir.join("plugins"),
+        data_dir.join("agents"),
+        env!("CARGO_PKG_VERSION"),
+    ));
+    Ok(Arc::new(WebState::local(app, data_dir)))
+}
+
+pub fn run() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if help_requested(&args) {
+        print!("{HELP_TEXT}");
+        return ExitCode::SUCCESS;
+    }
+
+    // The library entry point may run beside an embedding app's own subscriber;
+    // a second init is ignored rather than fatal.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "dbx_web=info,tower_http=info".parse().unwrap()),
+        )
+        .try_init();
+
+    let runtime = dbx_core::scheduled_backup::worker_runtime().expect("Failed to build tokio runtime");
+    match runtime.block_on(serve()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn web_mcp_startup_error(error: String) -> String {
+    format!("Failed to start DBX Web: invalid Web MCP configuration: {error}")
+}
+
+/// Serves DBX Web on `DBX_PORT` (default 4224) from `DBX_DATA_DIR`.
+///
+/// Runs the server on the caller's runtime: an embedding app can start it in
+/// process and talk to it over loopback instead of shipping the `dbx-web`
+/// binary. Logging is the caller's business here; [`run`] installs one.
+pub async fn serve() -> Result<(), String> {
+    rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install rustls crypto provider");
+
+    // Data directory
+    let data_dir = std::env::var("DBX_DATA_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(home).join(".dbx-web")
+    });
+    std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
+
+    let app_state = {
+        let db_path = data_dir.join("dbx.db");
+        let storage = Storage::open_unmigrated(&db_path)
+            .await
+            .expect("Failed to open storage")
+            .with_secret_key_policy(SecretKeyPolicy::ManagedDataDir);
+
+        // Initialize core dialect registry and load external plugin dialects
+        register_core_dialects();
+        let registry = DialectRegistry::global();
+        let plugin_dirs = vec![data_dir.join("plugins").join("dialects")];
+        let load_result = DialectPluginLoader::scan_and_load(registry, &plugin_dirs);
+        log::info!(
+            "Dialect plugins loaded: {} success, {} errors, {} skipped",
+            load_result.loaded.len(),
+            load_result.errors.len(),
+            load_result.skipped.len()
+        );
+
+        // Start dialect YAML hot-reload watcher
+        let watch_dirs = plugin_dirs.clone();
+        tokio::spawn(async move {
+            if let Err(e) = DialectHotReload::run_forever(watch_dirs, DialectRegistry::global()).await {
+                log::error!("Dialect hot-reload watcher exited: {e}");
+            }
+        });
+        log::info!("Dialect hot-reload watcher started");
+
+        Arc::new(AppState::new_with_plugin_and_agent_dir_and_app_version(
+            storage,
+            data_dir.join("plugins"),
+            web_agent_dir(&data_dir),
+            env!("CARGO_PKG_VERSION"),
+        ))
+    };
+
+    app_state.set_honor_fixed_ssh_local_ports(true);
+
+    // Password hash: env var takes priority, then database
+    let password_disabled = std::env::var("DBX_DISABLE_PASSWORD")
+        .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    let password_viewer_enabled =
+        password_viewer_enabled_from_env(std::env::var("DBX_DISABLE_PASSWORD_VIEWER").ok().as_deref());
+
+    let password_hash = if password_disabled {
+        None
+    } else if let Ok(pw) = std::env::var("DBX_PASSWORD") {
+        let salt = SaltString::generate(&mut OsRng);
+        Some(Argon2::default().hash_password(pw.as_bytes(), &salt).expect("Failed to hash password").to_string())
+    } else {
+        app_state.storage.load_password_hash().await.unwrap_or(None)
+    };
+
+    let public_base_path = normalize_public_base_path(std::env::var("DBX_PUBLIC_BASE_PATH").ok());
+
+    // `DBX_WEB_CAPTCHA` pins the policy for managed deployments; otherwise the
+    // value saved from `设置 → 安全` wins, and `auto` is the default.
+    let captcha_env_raw = std::env::var("DBX_WEB_CAPTCHA").ok();
+    let captcha_env_locked = captcha_env_raw.as_deref().is_some_and(|raw| !raw.trim().is_empty());
+    let captcha_mode = match captcha_env_raw.as_deref().filter(|raw| !raw.trim().is_empty()) {
+        Some(raw) => captcha::CaptchaMode::parse(raw),
+        None => match app_state.storage.load_web_login_captcha_mode().await.unwrap_or(None).as_deref() {
+            Some(stored) => captcha::CaptchaMode::parse(stored),
+            None => captcha::CaptchaMode::Auto,
+        },
+    };
+
+    let demo_mode = demo::demo_mode_from_env();
+
+    let migration_ready = storage_migration_ready(&app_state).await;
+    let web_mcp = Arc::new(if migration_ready {
+        WebMcpRuntime::load(&app_state.storage, !password_disabled && password_hash.is_some())
+            .await
+            .map_err(web_mcp_startup_error)?
+    } else {
+        WebMcpRuntime::disabled()
+    });
+    let web_state = Arc::new(WebState {
+        app: app_state,
+        data_dir,
+        notes_roots: routes::docs::notes_roots_from_env(std::env::var_os("DBX_DOCS_NOTES_ROOTS").as_deref()),
+        public_base_path: public_base_path.clone(),
+        demo_mode,
+        password_disabled,
+        password_viewer_enabled,
+        password_hash: RwLock::new(password_hash),
+        sessions: RwLock::new(HashSet::new()),
+        sse_channels: RwLock::new(HashMap::new()),
+        transfer_progress_channels: RwLock::new(HashMap::new()),
+        table_import_channels: RwLock::new(HashMap::new()),
+        sql_file_executions: RwLock::new(HashMap::new()),
+        sql_file_failure_logs: Default::default(),
+        managed_sql_previews: Default::default(),
+        nacos_imports: RwLock::new(HashMap::new()),
+        login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit { fail_count: 0, locked_until: None }),
+        captchas: captcha::CaptchaStore::new(),
+        captcha_mode: tokio::sync::RwLock::new(captcha_mode),
+        captcha_env_locked,
+        export_files: RwLock::new(HashMap::new()),
+        ssh_prompts: Arc::new(ssh_prompt::SshPromptHub::new()),
+        migration_ready: Arc::new(AtomicBool::new(migration_ready)),
+        web_mcp,
+    });
+
+    ssh_prompt::install_web_ssh_prompt_bridge(web_state.ssh_prompts.clone());
+    routes::sql_file::start_sql_file_cleanup(&web_state);
+    routes::connection::start_connection_idle_sweeper(&web_state);
+
+    let backup_root = std::env::var_os("DBX_BACKUP_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| web_state.data_dir.join("backups"));
+    std::fs::create_dir_all(&backup_root).expect("Failed to create server backup root");
+    let backup_service = routes::scheduled_backup::service(&web_state).expect("Failed to resolve server backup root");
+    let backup_stop = tokio_util::sync::CancellationToken::new();
+    let backup_worker = backup_service.start(backup_stop.clone());
+
+    let mut app = build_router(web_state.clone(), RouterMode::Server);
 
     let mcp_router = web_mcp_router(&web_state).map_err(web_mcp_startup_error)?;
     app = app.merge(
