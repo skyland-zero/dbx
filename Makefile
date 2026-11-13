@@ -3,7 +3,7 @@
 PNPM ?= pnpm
 TAURI_DEV_PORT ?= 1420
 
-.PHONY: help install docs-install check-tauri-dev-port dev dev-fast dev-web dev-backend build package clean docs docs-build check test cargo-check-fast cargo-test-fast db db-list db-verify db-down db-reset db-check db-completion
+.PHONY: help install docs-install check-tauri-dev-port dev dev-fast dev-web dev-backend nsh-dev nsh-check build package clean docs docs-build check test cargo-check-fast cargo-test-fast db db-list db-verify db-down db-reset db-check db-completion
 
 export DB
 export DB_VERSION
@@ -89,6 +89,14 @@ dev-web: node_modules/.modules.yaml
 
 dev-backend: node_modules/.modules.yaml
 	$(PNPM) dev:backend
+
+# The NSH GUI (apps/nsh): its own workspace, built by the `nsh` CLI.
+# See docs/nsh-gui-migration.md.
+nsh-dev:
+	cd apps/nsh && nsh run
+
+nsh-check:
+	cd apps/nsh && cargo check --workspace
 
 build: node_modules/.modules.yaml
 	$(PNPM) build:checked

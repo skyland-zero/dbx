@@ -1,0 +1,8 @@
+{
+  "name": "DBX",
+  "id": "com.dbx.native",
+  "version": "0.1.0",
+  "build": 1,
+  "appearance": "system",
+  "rust": "native"
+}

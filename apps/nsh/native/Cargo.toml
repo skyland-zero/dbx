@@ -1,0 +1,29 @@
+[package]
+name = "dbx-native"
+description = "DBX's NSH GUI: the TSX-facing module and the Rust workbench components."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "dbx_native"
+
+[dependencies]
+nsh-core = "0.5.0"
+nsh-base = "0.5.0"
+
+# The desktop data channel: the dbx-web router, run in this process (see
+# docs/nsh-gui-migration.md, D1). `default-features = false` keeps the web
+# server's Docker features (DuckDB sidecar, MQ admin, cipher SQLite) out of
+# the desktop build; `sqlite-bundled` gives storage its SQLite.
+dbx-web = { path = "../../../crates/dbx-web", default-features = false }
+dbx-core = { path = "../../../crates/dbx-core", default-features = false, features = [
+  "sqlite-bundled",
+  "sqlserver-native-attention",
+] }
+
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["sync", "rt"] }
+# Loopback only: no TLS, no proxy detection.
+reqwest = { version = "0.12", default-features = false, features = ["blocking"] }

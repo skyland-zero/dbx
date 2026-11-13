@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["native"]
+
+# The GUI ships beside the existing desktop app (see
+# docs/nsh-gui-migration.md). It stays out of the repository workspace so the
+# root `cargo --workspace` lanes never build GTK 4, QuickJS or wgpu.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+# `sqlserver-native-attention` needs TDS ATTENTION, which only the vendored
+# tiberius patches in (`send_attention`). Without this the SQL Server driver
+# fails to compile rather than silently losing cancellation.
+#
+# The MySQL and PostgreSQL forks are the same ones the root workspace patches
+# in (deprecated `sha256_password` accounts, GaussDB); dbx-core's drivers use
+# APIs only those revisions have.
+[patch.crates-io]
+tiberius = { path = "../../vendor/tiberius" }
+mysql_async = { git = "https://github.com/t8y2/mysql_async.git", rev = "4cd84d86bb86b060320ce3459561e8093e4422fa" }
+tokio-postgres = { git = "https://github.com/t8y2/tokio-postgres-gaussdb.git", rev = "5f37ebd1ae8e2c81ac07b89a046c9319f7a1bc89" }
+postgres-types = { git = "https://github.com/t8y2/tokio-postgres-gaussdb.git", rev = "5f37ebd1ae8e2c81ac07b89a046c9319f7a1bc89" }
+postgres-protocol = { git = "https://github.com/t8y2/tokio-postgres-gaussdb.git", rev = "5f37ebd1ae8e2c81ac07b89a046c9319f7a1bc89" }
