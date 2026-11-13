@@ -8,6 +8,10 @@ license = "Apache-2.0"
 name = "dbx-web"
 path = "src/main.rs"
 
+[lib]
+name = "dbx_web"
+path = "src/lib.rs"
+
 [features]
 default = ["duckdb-sidecar", "dynamodb", "mq-admin", "sqlite-sqlcipher", "system-fonts"]
 duckdb-sidecar = ["dbx-core/duckdb-sidecar", "dbx-mcp/duckdb-sidecar"]
