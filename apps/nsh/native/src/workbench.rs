@@ -1,10 +1,9 @@
-//! The SQL workbench: a query editor, a result grid and the status of the
-//! last run.
+//! The SQL workbench: tabs of query editors with a result grid each.
 //!
 //! It is a Rust component because the rows never leave Rust: a 10 000-row
 //! result crosses no JS boundary, and `DataTable` only builds the rows in
-//! view. TSX owns the page's chrome (back, connection, password) and renders
-//! this component once the connection is open.
+//! view. TSX owns the page's chrome (back, connection, the connect step) and
+//! renders this component once the connection is open.
 
 use nsh_base::{button, data_table, editor::editor, theme, DataTableColumn, DataTableRows};
 use nsh_core::prelude::*;
@@ -18,38 +17,73 @@ pub struct SqlWorkbenchProps {
     pub connection_id: Prop<SharedString>,
 }
 
+/// One tab: its statement, the status of its last run and what it returned.
+///
+/// The signals are the tab's state; the tab keeps its own results while
+/// another tab is shown.
+#[derive(Clone, PartialEq)]
+struct Tab {
+    id: u64,
+    sql: Signal<String>,
+    status: Signal<String>,
+    shown: Signal<QueryView>,
+}
+
+fn new_tab(id: u64) -> Tab {
+    Tab {
+        id,
+        sql: signal(String::from("SELECT @@VERSION AS version;")),
+        status: signal(String::from("就绪")),
+        shown: signal(QueryView::default()),
+    }
+}
+
 /// The SQL workbench of one connection.
 #[component]
 pub fn SqlWorkbench(props: SqlWorkbenchProps) -> impl IntoElement {
-    let sql = signal(String::from("SELECT @@VERSION AS version;"));
-    let status = signal(String::from("就绪"));
-    let shown = signal(QueryView::default());
+    let tabs = signal(vec![new_tab(1)]);
+    let active = signal(1u64);
+    let current = computed(move || {
+        tabs.get()
+            .into_iter()
+            .find(|tab| tab.id == active.get())
+            .or_else(|| tabs.get().into_iter().next())
+            .unwrap_or_else(|| new_tab(0))
+    });
+
+    let open_tab = move || {
+        let id = tabs.with(|tabs| tabs.iter().map(|tab| tab.id).max().unwrap_or(0) + 1);
+        tabs.update(move |tabs| tabs.push(new_tab(id)));
+        active.set(id);
+    };
 
     let run = move || {
+        let tab = current.get_untracked();
         let connection_id = props.connection_id.get().to_string();
-        let statement = sql.get();
-        status.set("执行中…".to_owned());
-        shown.set(QueryView::default());
+        let statement = tab.sql.get();
+        tab.status.set("执行中…".to_owned());
+        tab.shown.set(QueryView::default());
         spawn(async move {
             match service::execute(&connection_id, &statement).await {
                 Ok(result) => {
-                    status.set(describe(&result));
-                    shown.set(result);
+                    tab.status.set(describe(&result));
+                    tab.shown.set(result);
                 }
-                Err(error) => status.set(format!("执行失败：{error}")),
+                Err(error) => tab.status.set(format!("执行失败：{error}")),
             }
         });
     };
 
     let cancel = move || {
-        let execution_id = shown.with(|result| result.execution_id.clone());
+        let tab = current.get_untracked();
+        let execution_id = tab.shown.with(|result| result.execution_id.clone());
         if execution_id.is_empty() {
             return;
         }
         spawn(async move {
             match service::cancel(execution_id).await {
-                Ok(()) => status.set("已请求取消".to_owned()),
-                Err(error) => status.set(format!("取消失败：{error}")),
+                Ok(()) => tab.status.set("已请求取消".to_owned()),
+                Err(error) => tab.status.set(format!("取消失败：{error}")),
             }
         });
     };
@@ -60,14 +94,36 @@ pub fn SqlWorkbench(props: SqlWorkbenchProps) -> impl IntoElement {
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
         .child(
+            // The tab strip: one button per tab, then the button that opens one.
             view()
                 .flex_row()
                 .items_center()
-                .gap_2()
-                .px_3()
-                .py_2()
+                .gap_1()
+                .px_2()
+                .py_1()
                 .border_b_1()
                 .border_color(move || theme().border)
+                .children(tabs.get().into_iter().map(|tab| {
+                    let id = tab.id;
+                    button()
+                        .on_press(move || active.set(id))
+                        .px_3()
+                        .py_1()
+                        .rounded(move || theme().radius)
+                        .bg(move || if active.get() == id { theme().muted } else { theme().background })
+                        .child(text(format!("查询 {id}")).text_sm())
+                }))
+                .child(
+                    button()
+                        .on_press(open_tab)
+                        .px_2()
+                        .py_1()
+                        .rounded(move || theme().radius)
+                        .border_1()
+                        .border_color(move || theme().border)
+                        .child(text("+").text_sm()),
+                )
+                .child(view().flex_1())
                 .child(
                     button()
                         .on_press(run)
@@ -87,20 +143,22 @@ pub fn SqlWorkbench(props: SqlWorkbenchProps) -> impl IntoElement {
                         .border_color(move || theme().border)
                         .child(text("取消")),
                 )
-                .child(text(move || status.get()).text_sm().text_color(move || theme().muted_foreground)),
+                .child(text(move || current.get().status.get()).text_sm().text_color(move || theme().muted_foreground)),
         )
         .child(
             editor()
                 .language("sql")
-                .default_value(SharedString::from(sql.get_untracked()))
-                .on_change(move |text: &SharedString| sql.set(text.to_string()))
+                // Controlled by the active tab's text, so switching tabs shows
+                // that tab's statement and edits are written back to it.
+                .value(move || Some(SharedString::from(current.get().sql.get())))
+                .on_change(move |text: &SharedString| current.get().sql.set(text.to_string()))
                 .flex_1(),
         )
         .child(
             data_table()
                 .flex_1()
                 .columns(move || {
-                    shown.with(|result| {
+                    current.get().shown.with(|result| {
                         result
                             .columns
                             .iter()
@@ -112,7 +170,7 @@ pub fn SqlWorkbench(props: SqlWorkbenchProps) -> impl IntoElement {
                             .collect::<Vec<_>>()
                     })
                 })
-                .data(move || shown.with(rows_of)),
+                .data(move || current.get().shown.with(rows_of)),
         )
 }
 
