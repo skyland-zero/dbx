@@ -15,7 +15,9 @@
 | 数据通道 | **进程内 `Router::oneshot`**（`RouterMode::Local`），无端口、无 HTTP 客户端 |
 | 连接配置的钥匙串 | **已打通**：`build_local_state` 用 `Storage::with_desktop_credential_recovery()` 打开桌面存储；本地模式 `password_viewer_enabled = true`，已保存的密码可直接连接 |
 | M0（三平台启动 / 中文 IME / 网格帧率） | 未验证：需要图形环境与 GTK4 |
-| 多 tab、1:1 视觉还原 | 未开始（M4、§8） |
+| 主题（D10：从 `tokens.css` 生成） | **已完成**：`scripts/gen-nsh-theme.mjs` → `apps/nsh/theme.json`（31 个 token × light/dark，`radius` 4px），`pnpm check` 会校验漂移 |
+| 多 tab | 未开始（M4） |
+| 1:1 视觉还原（字体、图标、截图基线） | 未开始（§8） |
 | 运行说明 | `apps/nsh/README.md` |
 
 复现验证：

@@ -32,6 +32,18 @@ TSX (App.tsx, routes/)            chrome, forms, navigation
 - Requests run on the DBX runtime; the UI thread only awaits the reply, so the
   engine never blocks on a query.
 
+## Theme
+
+`theme.json` is generated, never edited by hand:
+
+```sh
+pnpm generate:nsh-theme          # rewrite apps/nsh/theme.json
+node scripts/gen-nsh-theme.mjs --check   # what `pnpm check` runs
+```
+
+It carries DBX's shadcn tokens (`background`, `primary`, `border`, `sidebar-*`
+…) and the radius, converted from `rgb()` to hex.
+
 ## Run
 
 ```sh
@@ -61,7 +73,7 @@ cargo test -p dbx-native    # starts the loopback server against a temp store
 | Connections are created in the existing app | no connection form yet | §7 of the plan |
 | The password field is a fallback | saved passwords come from the keychain; typing one overrides it for the session | — |
 | One tab | multi-tab is M4 | `Tabs` in `SqlWorkbench` |
-| Not 1:1 with the Vue UI yet | this slice proves the data path | §8 of the plan: `tokens.css` → `themes/*.json`, screenshot diff |
+| 1:1 with the Vue UI is underway | colours and radius come from `theme.json`, generated from the Vue app's `tokens.css`; fonts, icons and the screenshot baseline are still missing | §8 of the plan: bundle the fonts, reuse the SVG sources, add screenshot diff |
 
 ## Layout
 

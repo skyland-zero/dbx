@@ -9,6 +9,12 @@ const tasks = [
     args: ["scripts/sync-connection-types.mjs", "--check"],
   },
   {
+    // The NSH GUI draws with these tokens; a hand-edited theme would drift.
+    name: "nsh-theme",
+    command: "node",
+    args: ["scripts/gen-nsh-theme.mjs", "--check"],
+  },
+  {
     name: "format",
     command: "oxfmt",
     args: ["--check", "apps/desktop/src/**/*.{ts,vue}"],
