@@ -24,6 +24,7 @@ dbx-core = { path = "../../../crates/dbx-core", default-features = false, featur
 ] }
 
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["sync", "rt"] }
-# Loopback only: no TLS, no proxy detection.
-reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time"] }
+# The router is called in process (`oneshot`), not over a socket.
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }

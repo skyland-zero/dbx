@@ -12,8 +12,8 @@
 | --- | --- |
 | M1：`dbx-web` 拆 lib + 数据通道 + 连接列表 | **已完成**；`cargo check --workspace` 通过，冒烟测试真实启动进程内服务并读到连接列表（rustc 1.99.1） |
 | SQL 工作台（编辑器 + 执行 + 取消 + 只读结果网格） | **已完成**，见 `apps/nsh/native/src/workbench.rs` |
-| 数据通道 | 本阶段是**同进程 loopback HTTP**，不是 §6.1 的 `Router::oneshot`（原因与切换步骤见 §6.1 末尾） |
-| 连接配置的钥匙串 | **未打通**：进程内服务以 `ManagedDataDir` 打开存储，暂时由工作台页面输入密码 |
+| 数据通道 | **进程内 `Router::oneshot`**（`RouterMode::Local`），无端口、无 HTTP 客户端 |
+| 连接配置的钥匙串 | **已打通**：`build_local_state` 用 `Storage::with_desktop_credential_recovery()` 打开桌面存储；本地模式 `password_viewer_enabled = true`，已保存的密码可直接连接 |
 | M0（三平台启动 / 中文 IME / 网格帧率） | 未验证：需要图形环境与 GTK4 |
 | 多 tab、1:1 视觉还原 | 未开始（M4、§8） |
 | 运行说明 | `apps/nsh/README.md` |
@@ -162,14 +162,23 @@ apps/nsh/                          # 独立 workspace（根 Cargo.toml exclude�
 
 用进程内 router 的代价只是每次调用多一次 JSON 序列化，在分页结果下可以忽略。等第一阶段跑完、拿到真实性能数据，再把热门路径（结果集分页、大字段）换成直连 core。
 
-**本分支的实现**：`Router::oneshot` 需要先把 `serve()` 里的路由组装（约 1400 行 `.route(...)`）抽成 `build_router()`。为了先打通端到端，当前用**同进程 loopback**：`apps/nsh/native/src/service.rs` 选一个 `127.0.0.1` 随机端口，设 `DBX_BIND_ADDR=127.0.0.1`、`DBX_DISABLE_PASSWORD=1`，在后台线程跑 `dbx_web::serve()`，再用 `reqwest` 调同一套 JSON。
+**本分支的实现**（已完成）：
 
-它与最终形态的差别只有一个 socket：同一进程、同一份路由、同一份数据目录，且不监听外网。切换步骤：
+```rust
+// crates/dbx-web
+pub fn build_router(state: Arc<WebState>, mode: RouterMode) -> Router;
+pub async fn build_local_state(data_dir: PathBuf) -> Result<Arc<WebState>, String>;
 
-1. 把 `serve()` 中 `let api = Router::new()...` 到 `.with_state(web_state.clone())` 抽成 `pub fn build_router(state, mode) -> Router`；
-2. 加 `RouterMode::Local`（跳过 `migration_gate` / `demo_mode_gate` / `auth_middleware`，见 `lib.rs:1599-1601`）；
-3. `service.rs` 用 `tower::ServiceExt::oneshot` 调 `build_router`，删掉端口与 `reqwest`；
-4. 同时把存储策略换成 `Storage::with_desktop_credential_recovery()`，钥匙串即接通。
+// apps/nsh/native/src/service.rs
+let state = build_local_state(data_dir)?;          // 桌面存储 + 钥匙串
+let router = build_router(state, RouterMode::Local); // 无 login/captcha/migration 门
+let response = router.clone().oneshot(request).await?; // 进程内，无端口
+```
+
+- `RouterMode::Local` 跳过 `migration_gate` / `demo_mode_gate` / `auth_middleware`（`lib.rs` 的 `api_router`）。
+- 本地状态用 `Storage::with_desktop_credential_recovery()`，并按桌面习惯让 `/api/connection/list` 返回已保存的密码（仅在进程内，不经过网络）。
+- 工作台的密码框因此变成**可选**：留空即用钥匙串里的密码。
+- 请求在 DBX 自己的 multi-thread runtime 上执行，UI 线程只 await 一个 channel，不阻塞引擎。
 
 ### 6.2 契约
 

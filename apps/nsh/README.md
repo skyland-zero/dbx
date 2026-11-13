@@ -16,22 +16,21 @@ TSX (App.tsx, routes/)            chrome, forms, navigation
         ├── SqlWorkbench          editor + result grid (rows never enter JS)
         └── Dbx.listConnections() Promise<JSON>
               │
-        service.rs                in-process dbx-web on 127.0.0.1:<random>
+        service.rs                RouterMode::Local, called with `oneshot`
               │
         dbx-web (lib)             the same 767 routes the browser build uses
               │
         dbx-core                  storage, drivers, SQL Server over tiberius
 ```
 
-- The server runs **inside this process**: `service.rs` picks a free port on
-  loopback, sets `DBX_BIND_ADDR=127.0.0.1` and `DBX_DISABLE_PASSWORD=1`, and
-  starts `dbx_web::serve()` on a background thread. No `dbx-web` binary ships
-  with the app and nothing listens off the machine.
-- The data directory is the desktop app's (`DBX_DATA_DIR`, else
-  `com.dbx.app`), so both GUIs read the same `dbx.db`.
-- `docs/nsh-gui-migration.md` §6.1: the loopback hop is temporary; the
-  follow-up replaces it with an in-process `Router::oneshot` call, which needs
-  the router factored out of `serve()`.
+- The router runs **inside this process**: `service.rs` builds it with
+  `RouterMode::Local` (no login gate) and calls it with `tower::ServiceExt::oneshot`.
+  No port is opened, no `dbx-web` binary ships with the app.
+- The store is the desktop app's (`DBX_DATA_DIR`, else `com.dbx.app`), opened
+  with `Storage::with_desktop_credential_recovery()`, so both GUIs read the
+  same `dbx.db` and the OS keychain's saved passwords.
+- Requests run on the DBX runtime; the UI thread only awaits the reply, so the
+  engine never blocks on a query.
 
 ## Run
 
@@ -59,8 +58,8 @@ cargo test -p dbx-native    # starts the loopback server against a temp store
 
 | Gap | Why | Next |
 | --- | --- | --- |
-| A saved password cannot be read from the OS keychain | the in-process server opens the store with `SecretKeyPolicy::ManagedDataDir` (`dbx-web`'s web policy), not the desktop's keychain policy | type the password on the workbench page; then build the local router with `Storage::with_desktop_credential_recovery()` |
 | Connections are created in the existing app | no connection form yet | §7 of the plan |
+| The password field is a fallback | saved passwords come from the keychain; typing one overrides it for the session | — |
 | One tab | multi-tab is M4 | `Tabs` in `SqlWorkbench` |
 | Not 1:1 with the Vue UI yet | this slice proves the data path | §8 of the plan: `tokens.css` → `themes/*.json`, screenshot diff |
 

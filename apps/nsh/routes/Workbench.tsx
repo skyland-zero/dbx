@@ -8,7 +8,7 @@ import { Dbx, SqlWorkbench } from "dbx/native";
 export function Workbench(props: { connectionId: string; title: string; onBack: () => void }) {
   const password = signal("");
   const connected = signal(false);
-  const status = signal("输入密码后连接");
+  const status = signal("连接后即可执行 SQL");
 
   const connect = async () => {
     status.set("连接中…");
@@ -34,12 +34,12 @@ export function Workbench(props: { connectionId: string; title: string; onBack: 
         when={connected()}
         else={
           <View class="gap-3 p-6">
-            <Text class="text-sm text-muted-foreground">密码只用于本次连接，不会保存。</Text>
+            <Text class="text-sm text-muted-foreground">留空使用已保存的密码；输入则只用于本次会话。</Text>
             <Input
               value={password()}
               onChange={({ value }) => password.set(value)}
               masked
-              placeholder="密码"
+              placeholder="密码（可选）"
               class="rounded-(--radius) border border-input px-3 py-2"
             />
             <Button

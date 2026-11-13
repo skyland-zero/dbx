@@ -1668,13 +1668,14 @@ dependencies = [
 name = "dbx-native"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "dbx-core",
  "dbx-web",
  "nsh-base",
  "nsh-core",
- "reqwest",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -5296,7 +5297,6 @@ dependencies = [
  "cookie",
  "cookie_store",
  "encoding_rs",
- "futures-channel",
  "futures-core",
  "futures-util",
  "http",

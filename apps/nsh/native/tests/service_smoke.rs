@@ -23,5 +23,12 @@ fn starts_db_web_and_lists_the_saved_connections() {
     let parsed: serde_json::Value = serde_json::from_str(&listing).expect("the server answers with JSON");
     assert!(parsed.is_array(), "a fresh store lists no connections: {listing}");
 
+    // The query route is reached through the same router: an unsaved id is
+    // refused before any database is dialled.
+    let error = runtime
+        .block_on(dbx_native::service::execute("missing", "SELECT 1"))
+        .expect_err("an unsaved connection cannot run a statement");
+    assert!(error.contains("not saved"), "unexpected error: {error}");
+
     let _ = std::fs::remove_dir_all(&data_dir);
 }

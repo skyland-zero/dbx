@@ -1,24 +1,26 @@
-//! The desktop data channel: `dbx-web`'s router, run inside this process.
+//! The desktop data channel: `dbx-web`'s router, built and called inside this
+//! process.
 //!
 //! DBX's business logic and every request shape already live in `dbx-web`
 //! (767 routes, mirrored by the Vue client's `http.ts`). Rather than write a
-//! third connection adapter, the GUI starts that server on a loopback port in
-//! this process and talks to it with the same JSON the browser build sends.
+//! third connection adapter, the GUI builds that router with
+//! [`RouterMode::Local`] — no login gate — and calls it with `oneshot`. The
+//! app is the router's only client, and no port is opened.
 //!
-//! The port never leaves the process: it is chosen here, no password is
-//! configured, and the only client is this app.
+//! The store is the desktop app's (`DBX_DATA_DIR`, else `com.dbx.app`), opened
+//! with the OS keychain, so both GUIs see the same connections and saved
+//! passwords.
 //!
-//! `docs/nsh-gui-migration.md` §6 explains why; the follow-up is to replace
-//! the loopback hop with an in-process `Router::oneshot` call.
+//! `docs/nsh-gui-migration.md` §6 records the decision.
 
-use std::{
-    net::TcpListener,
-    path::PathBuf,
-    sync::OnceLock,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
+use axum::body::Body;
+use axum::http::{Method, Request};
+use dbx_web::{build_local_state, build_router, RouterMode};
 use nsh_core::prelude::*;
+use tokio::runtime::Runtime;
+use tower::ServiceExt;
 
 /// What TSX calls: `import { Dbx } from "dbx/native"; Dbx.listConnections()`.
 #[module]
@@ -38,7 +40,7 @@ impl Dbx {
 /// no window (`native/tests/service_smoke.rs`).
 #[doc(hidden)]
 pub async fn list_connections_for_test() -> Result<String, String> {
-    call(|service| service.get("/api/connection/list")).await
+    call(|service| async move { service.get("/api/connection/list").await }).await
 }
 
 /// One query's result, ready for the data grid.
@@ -81,7 +83,7 @@ impl QueryView {
             rows,
             affected_rows: value["affected_rows"].as_u64().unwrap_or_default(),
             elapsed_ms: value["execution_time_ms"].as_u64().unwrap_or_default() as u128,
-            truncated: value["truncated"].as_bool().unwrap_or(false),
+            truncated: value["truncated"].as_bool().unwrap_or_default(),
             execution_id: execution_id.to_owned(),
             message,
         })
@@ -108,13 +110,13 @@ fn render_cell(cell: Option<&serde_json::Value>) -> String {
 pub async fn connect(connection_id: &str, password: &str) -> Result<String, String> {
     let connection_id = connection_id.to_owned();
     let password = password.to_owned();
-    call(move |service| {
-        let mut config = saved_config(service, &connection_id)?;
+    call(move |service| async move {
+        let mut config = saved_config(&service, &connection_id).await?;
         if !password.is_empty() {
             config["password"] = serde_json::Value::String(password);
         }
         let body = serde_json::json!({ "config": config }).to_string();
-        let answer = service.post("/api/connection/connect", &body)?;
+        let answer = service.post("/api/connection/connect", &body).await?;
         Ok(json_string(&answer))
     })
     .await
@@ -124,8 +126,8 @@ pub async fn connect(connection_id: &str, password: &str) -> Result<String, Stri
 pub async fn execute(connection_id: &str, sql: &str) -> Result<QueryView, String> {
     let connection_id = connection_id.to_owned();
     let sql = sql.to_owned();
-    call(move |service| {
-        let config = saved_config(service, &connection_id)?;
+    call(move |service| async move {
+        let config = saved_config(&service, &connection_id).await?;
         let database = config["database"].as_str().unwrap_or_default().to_owned();
         let execution_id = next_execution_id();
         let body = serde_json::json!({
@@ -136,7 +138,7 @@ pub async fn execute(connection_id: &str, sql: &str) -> Result<QueryView, String
             "maxRows": 5000,
         })
         .to_string();
-        let answer = service.post("/api/query/execute", &body)?;
+        let answer = service.post("/api/query/execute", &body).await?;
         QueryView::parse(&answer, &execution_id)
     })
     .await
@@ -144,15 +146,15 @@ pub async fn execute(connection_id: &str, sql: &str) -> Result<QueryView, String
 
 /// Asks the server to cancel a running statement.
 pub async fn cancel(execution_id: String) -> Result<(), String> {
-    call(move |service| {
+    call(move |service| async move {
         let body = serde_json::json!({ "executionId": execution_id }).to_string();
-        service.post("/api/query/cancel", &body).map(|_| ())
+        service.post("/api/query/cancel", &body).await.map(|_| ())
     })
     .await
 }
 
-fn saved_config(service: &Service, connection_id: &str) -> Result<serde_json::Value, String> {
-    let list: serde_json::Value = serde_json::from_str(&service.get("/api/connection/list")?)
+async fn saved_config(service: &Service, connection_id: &str) -> Result<serde_json::Value, String> {
+    let list: serde_json::Value = serde_json::from_str(&service.get("/api/connection/list").await?)
         .map_err(|error| format!("bad connection list: {error}"))?;
     list.as_array()
         .and_then(|list| list.iter().find(|config| config["id"].as_str() == Some(connection_id)))
@@ -166,110 +168,93 @@ fn json_string(body: &str) -> String {
 }
 
 fn next_execution_id() -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or_default();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
     format!("nsh-{}-{nanos}", std::process::id())
 }
 
 // ---------------------------------------------------------------------------
-// The loopback server
+// The in-process router
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 struct Service {
-    base: String,
+    router: axum::Router,
+    runtime: Arc<Runtime>,
 }
 
-static SERVICE: OnceLock<Result<Service, String>> = OnceLock::new();
+static SERVICE: tokio::sync::OnceCell<Service> = tokio::sync::OnceCell::const_new();
 
-fn service() -> Result<&'static Service, String> {
-    SERVICE.get_or_init(start).as_ref().map_err(|error| error.clone())
+/// The one service of this process. `start` is awaited rather than blocked
+/// on: a caller is already inside a runtime (the engine's, or a test's).
+async fn service() -> Result<Service, String> {
+    SERVICE.get_or_try_init(start).await.cloned()
 }
 
-fn start() -> Result<Service, String> {
+async fn start() -> Result<Service, String> {
+    let runtime = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(|error| format!("cannot build the DBX runtime: {error}"))?,
+    );
+    // Building the state opens SQLite and registers dialects; run it as a
+    // task of the DBX runtime instead of the caller's.
+    let (sender, receiver) = tokio::sync::oneshot::channel();
     let data_dir = data_dir();
-    std::fs::create_dir_all(&data_dir).map_err(|error| format!("cannot create {}: {error}", data_dir.display()))?;
-    let port = free_port()?;
-
-    // Read by `dbx_web::serve` when the thread starts. The data directory is
-    // the desktop app's, so both GUIs list the same connections (D3).
-    std::env::set_var("DBX_DATA_DIR", &data_dir);
-    std::env::set_var("DBX_PORT", port.to_string());
-    // dbx-web binds 0.0.0.0 by default (containers); this server is this
-    // process's only, has no password and must never leave the machine.
-    std::env::set_var("DBX_BIND_ADDR", "127.0.0.1");
-    std::env::set_var("DBX_DISABLE_PASSWORD", "1");
-
-    std::thread::Builder::new()
-        .name("dbx-web".to_owned())
-        .spawn(move || {
-            let runtime = match dbx_core::scheduled_backup::worker_runtime() {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    eprintln!("[dbx] cannot build the web runtime: {error}");
-                    return;
-                }
-            };
-            if let Err(error) = runtime.block_on(dbx_web::serve()) {
-                eprintln!("[dbx] dbx-web stopped: {error}");
-            }
-        })
-        .map_err(|error| format!("cannot start dbx-web: {error}"))?;
-
-    let service = Service { base: format!("http://127.0.0.1:{port}") };
-    for _ in 0..600 {
-        if service.get("/api/version").is_ok() {
-            return Ok(service);
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Err("dbx-web did not answer on its loopback port".to_owned())
-}
-
-fn free_port() -> Result<u16, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| format!("no free port: {error}"))?;
-    listener.local_addr().map(|address| address.port()).map_err(|error| error.to_string())
+    let worker = runtime.clone();
+    worker.spawn(async move {
+        let _ = sender.send(build_local_state(data_dir).await);
+    });
+    let state = receiver.await.map_err(|_| "the DBX runtime stopped".to_owned())??;
+    let router = build_router(state, RouterMode::Local);
+    Ok(Service { router, runtime })
 }
 
 /// The desktop app's data directory: `DBX_DATA_DIR`, else the platform's
 /// application-data directory (the same one the Tauri shell resolves).
-fn data_dir() -> PathBuf {
+fn data_dir() -> std::path::PathBuf {
     if let Some(dir) = std::env::var_os("DBX_DATA_DIR").filter(|value| !value.is_empty()) {
-        return PathBuf::from(dir);
+        return std::path::PathBuf::from(dir);
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
     if cfg!(target_os = "windows") {
-        let app_data = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_default();
+        let app_data = std::env::var_os("APPDATA").map(std::path::PathBuf::from).unwrap_or_default();
         return app_data.join("com.dbx.app");
     }
     if cfg!(target_os = "macos") {
         return home.join("Library").join("Application Support").join("com.dbx.app");
     }
     std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
+        .map(std::path::PathBuf::from)
         .unwrap_or_else(|| home.join(".local").join("share"))
         .join("com.dbx.app")
 }
 
 impl Service {
-    fn get(&self, path: &str) -> Result<String, String> {
-        self.request(reqwest::Method::GET, path, None)
+    async fn get(&self, path: &str) -> Result<String, String> {
+        self.request(Method::GET, path, None).await
     }
 
-    fn post(&self, path: &str, body: &str) -> Result<String, String> {
-        self.request(reqwest::Method::POST, path, Some(body))
+    async fn post(&self, path: &str, body: &str) -> Result<String, String> {
+        self.request(Method::POST, path, Some(body.to_owned())).await
     }
 
-    fn request(&self, method: reqwest::Method, path: &str, body: Option<&str>) -> Result<String, String> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(600))
-            .build()
+    async fn request(&self, method: Method, path: &str, body: Option<String>) -> Result<String, String> {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(Body::from(body.unwrap_or_default()))
             .map_err(|error| error.to_string())?;
-        let mut request = client.request(method, format!("{}{path}", self.base));
-        if let Some(body) = body {
-            request = request.header("content-type", "application/json").body(body.to_owned());
-        }
-        let response = request.send().map_err(|error| error.to_string())?;
+        let response = self.router.clone().oneshot(request).await.map_err(|error| error.to_string())?;
         let status = response.status();
-        let text = response.text().map_err(|error| error.to_string())?;
+        let bytes =
+            axum::body::to_bytes(response.into_body(), 96 * 1024 * 1024).await.map_err(|error| error.to_string())?;
+        let text = String::from_utf8_lossy(&bytes).into_owned();
         if status.is_success() {
             Ok(text)
         } else {
@@ -290,25 +275,22 @@ fn api_error(status: u16, body: &str) -> String {
     }
 }
 
-/// Runs a blocking request on a worker thread and awaits it on the engine.
+/// Runs one request on the DBX runtime and awaits it on the engine.
 ///
-/// The router is synchronous HTTP; the engine thread drives the UI and must
-/// not wait on a socket, so every call hands the work off and returns a future.
-async fn call<T, F>(work: F) -> Result<T, String>
+/// The engine thread drives the UI and must not block on a query; the work
+/// runs as a task of the DBX runtime and the reply comes back over a channel
+/// either executor can await.
+async fn call<T, F, Fut>(work: F) -> Result<T, String>
 where
     T: Send + 'static,
-    F: FnOnce(&Service) -> Result<T, String> + Send + 'static,
+    F: FnOnce(Service) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<T, String>> + Send + 'static,
 {
+    let service = service().await?;
+    let runtime = service.runtime.clone();
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
-        .name("dbx-call".to_owned())
-        .spawn(move || {
-            let result = match service() {
-                Ok(service) => work(service),
-                Err(error) => Err(error),
-            };
-            let _ = sender.send(result);
-        })
-        .map_err(|error| format!("cannot start a worker: {error}"))?;
-    receiver.await.map_err(|_| "the DBX worker stopped".to_owned())?
+    runtime.spawn(async move {
+        let _ = sender.send(work(service).await);
+    });
+    receiver.await.map_err(|_| "the DBX runtime stopped".to_owned())?
 }
