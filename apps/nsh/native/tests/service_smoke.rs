@@ -32,6 +32,8 @@ fn starts_db_web_and_lists_the_saved_connections() {
             "sa".to_owned(),
             "secret".to_owned(),
             "master".to_owned(),
+            "#22c55e".to_owned(),
+            String::new(),
         ))
         .expect("save a SQL Server connection");
     let listing = runtime.block_on(dbx_native::service::list_connections_for_test()).expect("list connections");
@@ -44,7 +46,7 @@ fn starts_db_web_and_lists_the_saved_connections() {
     // The query route is reached through the same router: an unsaved id is
     // refused before any database is dialled.
     let error = runtime
-        .block_on(dbx_native::service::execute("missing", "SELECT 1"))
+        .block_on(dbx_native::service::execute("missing", "SELECT 1", "smoke-1".to_owned()))
         .expect_err("an unsaved connection cannot run a statement");
     assert!(error.contains("not saved"), "unexpected error: {error}");
 

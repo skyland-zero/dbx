@@ -1,53 +1,45 @@
-// The SQL workbench page: its chrome (back, connection, the session's
-// password) is TSX; the editor and the result grid are the Rust component, so
-// result rows never cross into JS.
-import { signal, Text, View } from "nsh";
-import { Button, Input } from "nsh/base";
-import { Dbx, SqlWorkbench } from "dbx/native";
+// A query tab's page. The connection (and the password prompt) is the app's
+// state, in `state.ts`; the Rust workbench below owns the tabs, editor and
+// result grid, so rows never cross into JS.
+import { Text, token, View } from "nsh";
+import { Button } from "nsh/base";
+import { SqlWorkbench } from "dbx/native";
+import { Icon } from "../components/Icon";
+import { connectState } from "../state";
 
-export function Workbench(props: { connectionId: string; title: string; onBack: () => void }) {
-  const password = signal("");
-  const connected = signal(false);
-  const status = signal("连接后即可执行 SQL");
-
-  const connect = async () => {
-    status.set("连接中…");
-    try {
-      const message = await Dbx.connect(props.connectionId, password());
-      status.set(message || "已连接");
-      connected.set(true);
-    } catch (error) {
-      status.set(`连接失败：${String(error)}`);
-    }
-  };
-
+export function Workbench(props: { connectionId: string; title: string; onClose: () => void }) {
   return (
-    <View class="flex-1 flex-col">
-      <View class="flex-row items-center gap-3 px-4 py-3 border-b border-border">
-        <Button onPress={props.onBack} class="rounded-(--radius) border border-border px-3 py-1 active:bg-muted">
-          <Text class="text-sm">返回</Text>
-        </Button>
-        <Text class="font-semibold">{props.title}</Text>
-        <Text class="text-sm text-muted-foreground">{status()}</Text>
-      </View>
+    <View class="flex-1 flex-col min-h-0 bg-background">
       <If
-        when={connected()}
+        when={connectState() === "connected"}
         else={
-          <View class="gap-3 p-6">
-            <Text class="text-sm text-muted-foreground">留空使用已保存的密码；输入则只用于本次会话。</Text>
-            <Input
-              value={password()}
-              onChange={({ value }) => password.set(value)}
-              masked
-              placeholder="密码（可选）"
-              class="rounded-(--radius) border border-input px-3 py-2"
-            />
-            <Button
-              onPress={() => void connect()}
-              class="self-start rounded-(--radius) bg-primary px-4 py-2 active:bg-primary/90"
+          <View class="flex-1 flex-col min-h-0">
+            <View
+              class="h-9 shrink-0 flex-row items-stretch border-b border-border"
+              style={{ backgroundColor: token("dbx-chrome") as string }}
             >
-              <Text class="text-primary-foreground">连接</Text>
-            </Button>
+              <View class="h-full flex-row items-center gap-1 border-r border-border bg-background px-2">
+                <Icon name="database" size={14} />
+                <Text class="truncate text-xs font-medium">{props.title}</Text>
+                <Button
+                  onPress={props.onClose}
+                  class="h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+                >
+                  <Icon name="x" size={12} />
+                </Button>
+              </View>
+              <View class="flex-1" />
+            </View>
+            <View class="flex-1 items-center justify-center gap-3">
+              <Icon
+                name={connectState() === "connecting" ? "loader-2" : "circle-x"}
+                size={22}
+                color={token(connectState() === "connecting" ? "primary" : "muted-foreground") as string}
+              />
+              <Text class="text-sm text-muted-foreground">
+                {connectState() === "connecting" ? `正在连接 ${props.title}…` : "连接失败，请重试"}
+              </Text>
+            </View>
           </View>
         }
       >

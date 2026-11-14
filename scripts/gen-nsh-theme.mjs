@@ -49,6 +49,14 @@ const COLORS = [
   "sidebar-accent-foreground",
   "sidebar-border",
   "sidebar-ring",
+  // DBX's chrome: the toolbar and tab bar, the content behind the editor, the
+  // editor toolbar and the sidebar's header. nsh themes take the app's own
+  // names as tokens, so the shell can read them beside shadcn's set.
+  "dbx-chrome",
+  "dbx-content",
+  "dbx-editor-toolbar",
+  "dbx-sidebar-header",
+  "dbx-gutter",
 ];
 
 const source = readFileSync(tokensPath, "utf8");
@@ -104,13 +112,23 @@ function scheme(selector) {
 
 const rootScope = declarations(block(":root"));
 const darkScope = declarations(block(".dark"));
+const themeScope = declarations(block("@theme inline"));
 const radiusToken = resolveVar(rootScope.get("radius") ?? "", rootScope);
 const radius = resolveVar(radiusToken, rootScope);
+// The fonts are registered by importing them (App.tsx imports the Geist
+// file); `--font-sans` names the family that import registers, not the
+// fontsource alias the Vue app's `@font-face` invents.
+const fontSans = (themeScope.get("font-sans") ?? "").replace("Geist Variable", "Geist");
+const fontMono = themeScope.get("font-mono") ?? "";
 
 const theme = {
   name: "DBX",
   cssVars: {
-    theme: { radius },
+    theme: {
+      radius,
+      ...(fontSans ? { "font-sans": fontSans } : {}),
+      ...(fontMono ? { "font-mono": fontMono } : {}),
+    },
     light: scheme(":root"),
     dark: scheme(".dark"),
   },

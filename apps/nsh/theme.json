@@ -2,7 +2,9 @@
   "name": "DBX",
   "cssVars": {
     "theme": {
-      "radius": "4px"
+      "radius": "4px",
+      "font-sans": "\"Geist\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "font-mono": "'Fira Code', 'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Consolas, monospace, \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\""
     },
     "light": {
       "background": "#ffffff",
@@ -35,7 +37,12 @@
       "sidebar-accent": "#f5f5f5",
       "sidebar-accent-foreground": "#171717",
       "sidebar-border": "#e5e5e5",
-      "sidebar-ring": "#a1a1a1"
+      "sidebar-ring": "#a1a1a1",
+      "dbx-chrome": "#f5f5f5",
+      "dbx-content": "#ffffff",
+      "dbx-editor-toolbar": "#fafafa",
+      "dbx-sidebar-header": "#fafafa",
+      "dbx-gutter": "#f3f3f3"
     },
     "dark": {
       "background": "#131416",
@@ -68,7 +75,12 @@
       "sidebar-accent": "#2c2c30",
       "sidebar-accent-foreground": "#dddde2",
       "sidebar-border": "#6e6e7247",
-      "sidebar-ring": "#85868b"
+      "sidebar-ring": "#85868b",
+      "dbx-chrome": "#1b1b1e",
+      "dbx-content": "#131416",
+      "dbx-editor-toolbar": "#19191c",
+      "dbx-sidebar-header": "#19191c",
+      "dbx-gutter": "#171719"
     }
   }
 }

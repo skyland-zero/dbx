@@ -5,5 +5,16 @@
   "build": 1,
   "appearance": "system",
   "theme": "theme.json",
-  "rust": "native"
+  "rust": "native",
+  "window": {
+    "title": "DBX",
+    "defaultSize": {
+      "width": 1280,
+      "height": 800
+    },
+    "minSize": {
+      "width": 900,
+      "height": 600
+    }
+  }
 }

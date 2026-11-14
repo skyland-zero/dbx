@@ -44,9 +44,30 @@ impl Dbx {
         username: String,
         password: String,
         database: String,
+        color: String,
+        note: String,
     ) -> Result<String, String> {
-        save_sql_server_connection_inner(name, host, port, username, password, database).await
+        save_sql_server_connection_inner(name, host, port, username, password, database, color, note).await
     }
+
+    /// Connects to a saved connection, with the password typed in this
+    /// session when the store has none (an empty `password` uses the saved
+    /// one).
+    pub async fn connect(connection_id: String, password: String) -> Result<String, String> {
+        connect_inner(&connection_id, &password).await
+    }
+
+    /// Whether the visual pass runs with `DBX_NSH_DEMO` set: the workbench
+    /// then opens without a server and shows its fixture rows.
+    pub fn is_demo() -> bool {
+        is_demo()
+    }
+}
+
+/// The visual pass's fixture mode (`DBX_NSH_DEMO=1`), set only by the
+/// screenshot tests.
+pub fn is_demo() -> bool {
+    std::env::var_os("DBX_NSH_DEMO").is_some_and(|value| !value.is_empty())
 }
 
 /// The raw `/api/connection/list` answer, also reachable from a test that has
@@ -116,11 +137,7 @@ fn render_cell(cell: Option<&serde_json::Value>) -> String {
 // ---------------------------------------------------------------------------
 
 /// Connects to a saved connection, with the password typed in this session.
-///
-/// Called from TSX as `Dbx.connect(connectionId, password)`; the module macro
-/// is the only caller, which the dead-code pass cannot see.
-#[allow(dead_code)]
-pub async fn connect(connection_id: &str, password: &str) -> Result<String, String> {
+async fn connect_inner(connection_id: &str, password: &str) -> Result<String, String> {
     let connection_id = connection_id.to_owned();
     let password = password.to_owned();
     call(move |service| async move {
@@ -147,6 +164,8 @@ pub async fn save_sql_server_connection_inner(
     username: String,
     password: String,
     database: String,
+    color: String,
+    note: String,
 ) -> Result<String, String> {
     call(move |service| async move {
         let id = new_connection_id();
@@ -158,7 +177,9 @@ pub async fn save_sql_server_connection_inner(
             "port": port,
             "username": username,
             "password": password,
-            "database": if database.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(database) },
+            "database": database,
+            "color": color,
+            "note": note,
         });
         let body = serde_json::json!({ "configs": [config] }).to_string();
         service.post("/api/connection/save", &body).await?;
@@ -168,13 +189,15 @@ pub async fn save_sql_server_connection_inner(
 }
 
 /// Runs `sql` on a connected database and returns the rows it produced.
-pub async fn execute(connection_id: &str, sql: &str) -> Result<QueryView, String> {
+///
+/// `execution_id` is made before the request starts, so Cancel has an id to
+/// send while the statement is still running.
+pub async fn execute(connection_id: &str, sql: &str, execution_id: String) -> Result<QueryView, String> {
     let connection_id = connection_id.to_owned();
     let sql = sql.to_owned();
     call(move |service| async move {
         let config = saved_config(&service, &connection_id).await?;
         let database = config["database"].as_str().unwrap_or_default().to_owned();
-        let execution_id = next_execution_id();
         let body = serde_json::json!({
             "connectionId": connection_id,
             "database": database,
@@ -220,7 +243,8 @@ fn new_connection_id() -> String {
     format!("nsh-sqlserver-{}-{nanos}", std::process::id())
 }
 
-fn next_execution_id() -> String {
+/// An id for a statement about to run, unique in this process run.
+pub fn new_execution_id() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())

@@ -90,14 +90,36 @@ cargo check --workspace     # toolchain 1.99.1
 cargo test -p dbx-native    # starts the loopback server against a temp store
 ```
 
+### Visual pass
+
+The first round of the 1:1 restore (shell, welcome, connection dialog,
+workbench) has screenshot tests:
+
+```powershell
+cd apps/nsh
+$env:DBX_DATA_DIR = "$env:TEMP\dbx-nsh-visual"
+nsh test visual.test.tsx --target windows
+```
+
+They write `.screenshots/{welcome,connection-dialog,workbench}.png`. Set
+`DBX_NSH_DEMO=1` for the workbench test: it opens a fixture result instead of
+connecting to a SQL Server. The connection tests save rows into
+`DBX_DATA_DIR`, so point it at a throwaway directory.
+
+Windows note: nsh 0.5.0 draws an input's placeholder and caret but not its
+value text. `components/Field.tsx` overlays the value as a `Text` over a
+transparent native input and mirrors key presses; remove that layer when nsh
+fixes its Win32 input drawing.
+
 ## Known gaps in this slice
 
 | Gap | Why | Next |
 | --- | --- | --- |
 | Only SQL Server has a form | this slice is SQL Server only | other drivers reuse `Dbx.save…` later |
-| The password field is a fallback | saved passwords come from the keychain; typing one overrides it for the session | — |
-| Tabs cannot be closed and do not drag | the strip is fixed tabs, per M4 | add close/reorder in a later slice |
-| 1:1 with the Vue UI is underway | colours and radius come from `theme.json`, generated from the Vue app's `tokens.css`; fonts, icons and the screenshot baseline are still missing | §8 of the plan: bundle the fonts, reuse the SVG sources, add screenshot diff |
+| The password prompt is a fallback | saved passwords come from the keychain; typing one overrides it for the session | — |
+| Tabs close but do not drag | the strip is a fixed row, per M4 | add reorder/detach in a later slice |
+| The connection form does not scroll | nsh's `Scroll` stops the field overlay repainting; the form is sized for a ≥720px content height | revisit when nsh fixes Win32 input drawing |
+| 1:1 visual pass, first round | shell, welcome, dialog and workbench use the Vue app's tokens, Lucide icons and Geist; screenshot tests are in `visual.test.tsx` | remaining C-class editor diffs and the database picker, §8.6 |
 
 ## Layout
 

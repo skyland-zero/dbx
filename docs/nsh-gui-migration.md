@@ -19,7 +19,7 @@
 | 多 tab | **已完成**（M4 的主体）：每个 tab 独立语句/状态/结果，编辑器随 tab 切换；关闭与拖拽拆分未做 |
 | 新建连接 | **已完成**：应用内表单写入 `dbx.db`（payload 已用真实 `dbx-web` 二进制验证） |
 | `serve()` 回归 | 已用构建出的 `dbx-web` 二进制冒烟：`/api/version` 200、`/api/connection/list` `[]`、保存后再列出、`/query/execute` 走到 tiberius 并返回预期连接错误 |
-| 1:1 视觉还原（字体、图标、截图基线） | 未开始（§8） |
+| 1:1 视觉还原（字体、图标、截图基线） | **第一轮完成**：应用外壳、连接侧栏、欢迎页、新建连接对话框和工作台外壳按 Vue 版还原；`nsh test visual.test.tsx --target windows` 生成 `.screenshots/{welcome,connection-dialog,workbench}.png`。编辑器/CodeMirror 的内部差异属 §8.6 C 类，待逐页打磨 |
 | Windows 开发运行 | **已打通**：`pwsh apps/nsh/run-windows.ps1`；窗口启动，连接列表读到 `dbx.db` |
 | 运行说明 | `apps/nsh/README.md` |
 
@@ -72,6 +72,47 @@ cd apps/nsh && cargo test -p dbx-native  # 进程内服务 + /api/connection/lis
 在定案前 `apps/nsh` 的代码保留；Windows 用 `make nsh-windows` 或
 `apps/nsh/run-windows.ps1`，`make nsh-dev` 仍是裸 `nsh run`，需要自行准备
 上面的环境。上游方案 A 仍是正式解。
+
+### 视觉还原第一轮（2026-11-14）
+
+第一批页面按 Vue 版的尺寸、层级和 token 还原：
+
+- **应用外壳**：40px 工具栏、260px 连接侧栏、经典（非分栏）布局；图标使用
+  Lucide 原图，主题沿用 `tokens.css` 生成的 `theme.json`。
+- **欢迎页**：统计卡、快速开始、常用操作、历史查询、MCP 提示和页脚，按
+  `WelcomeScreen.vue` 的 `workspace` 模式。
+- **新建连接**：840px 对话框、连接信息/高级页签、SQL Server 表单、颜色选择、
+  保存密码、备注和页脚动作。数据库选择器暂未迁（本阶段只做 SQL Server）。
+- **工作台**：36px 经典标签栏、编辑器工具栏、32/68 编辑器/结果分栏、结果工具栏
+  和 `DataTable` 结果网格；行号、列头、行高和等宽单元格按 `DataGrid.vue` 收敛。
+
+**Windows 输入框的文字不显示**是 nsh 0.5.0 在 Win32 后端的问题：原生输入框的
+占位符和光标会画，但输入值不画。`components/Field.tsx` 用透明原生输入框 + 覆盖层
+`Text` 解决；`onKeyPress` 让覆盖层随输入更新，`onChange` 在提交时校正，密码框
+同样复用。等上游修复后可以删掉这一层。
+
+截图基线由 `apps/nsh/visual.test.tsx` 生成：
+
+```sh
+cd apps/nsh
+nsh test visual.test.tsx --target windows
+```
+
+工作台没有可用 SQL Server 时，用 `DBX_NSH_DEMO=1` 打开夹具结果（
+`apps/nsh/native/src/workbench.rs` 的 `demo_view`），只用于视觉检查，不影响正常
+连接流程。测试会写入 `DBX_DATA_DIR` 指向的 `dbx.db`，建议用临时目录。
+
+第一轮截图基线：[欢迎页](assets/nsh/welcome.png) ·
+[新建连接](assets/nsh/connection-dialog.png) ·
+[工作台](assets/nsh/workbench.png)。
+
+已知的下一轮打磨项：欢迎页的最近连接/历史查询真实数据、连接对话框的数据库
+选择器、标签关闭/拖拽、Escape/焦点陷阱、原生标题栏与 Tauri 覆盖式标题栏的差异，
+以及 CodeMirror 与 nsh `Editor` 的光标/折叠/补全细节（§8.6 C 类）。
+
+连接表单当前不能滚动：nsh 的 `Scroll` 会让输入框覆盖层停止重绘（和 Win32 原生
+输入框的问题同源）。表单按内容高度展开，约 720px 内容高度内完整显示；更矮的
+窗口会裁掉底部。等上游修复原生输入绘制后再换回滚动容器。
 
 ## 1. 背景
 
