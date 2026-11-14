@@ -17,6 +17,8 @@
 | M0（三平台启动 / 中文 IME / 网格帧率） | 未验证：需要图形环境与 GTK4 |
 | 主题（D10：从 `tokens.css` 生成） | **已完成**：`scripts/gen-nsh-theme.mjs` → `apps/nsh/theme.json`（31 个 token × light/dark，`radius` 4px），`pnpm check` 会校验漂移 |
 | 多 tab | **已完成**（M4 的主体）：每个 tab 独立语句/状态/结果，编辑器随 tab 切换；关闭与拖拽拆分未做 |
+| 新建连接 | **已完成**：应用内表单写入 `dbx.db`（payload 已用真实 `dbx-web` 二进制验证） |
+| `serve()` 回归 | 已用构建出的 `dbx-web` 二进制冒烟：`/api/version` 200、`/api/connection/list` `[]`、保存后再列出、`/query/execute` 走到 tiberius 并返回预期连接错误 |
 | 1:1 视觉还原（字体、图标、截图基线） | 未开始（§8） |
 | 运行说明 | `apps/nsh/README.md` |
 

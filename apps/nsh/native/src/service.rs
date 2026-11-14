@@ -34,6 +34,19 @@ impl Dbx {
     pub async fn list_connections() -> Result<String, String> {
         list_connections_for_test().await
     }
+
+    /// Saves a new SQL Server connection (name, host, port, user, password,
+    /// database) and resolves with its id.
+    pub async fn save_sql_server_connection(
+        name: String,
+        host: String,
+        port: u16,
+        username: String,
+        password: String,
+        database: String,
+    ) -> Result<String, String> {
+        save_sql_server_connection_inner(name, host, port, username, password, database).await
+    }
 }
 
 /// The raw `/api/connection/list` answer, also reachable from a test that has
@@ -122,6 +135,38 @@ pub async fn connect(connection_id: &str, password: &str) -> Result<String, Stri
     .await
 }
 
+/// Saves a new SQL Server connection into DBX's store (`dbx.db`), so the
+/// Tauri app lists it too.
+///
+/// The password is encrypted by the store's key (the OS keychain on the
+/// desktop). Resolves with the new connection's id.
+pub async fn save_sql_server_connection_inner(
+    name: String,
+    host: String,
+    port: u16,
+    username: String,
+    password: String,
+    database: String,
+) -> Result<String, String> {
+    call(move |service| async move {
+        let id = new_connection_id();
+        let config = serde_json::json!({
+            "id": id,
+            "name": name,
+            "db_type": "sqlserver",
+            "host": host,
+            "port": port,
+            "username": username,
+            "password": password,
+            "database": if database.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(database) },
+        });
+        let body = serde_json::json!({ "configs": [config] }).to_string();
+        service.post("/api/connection/save", &body).await?;
+        Ok(id)
+    })
+    .await
+}
+
 /// Runs `sql` on a connected database and returns the rows it produced.
 pub async fn execute(connection_id: &str, sql: &str) -> Result<QueryView, String> {
     let connection_id = connection_id.to_owned();
@@ -165,6 +210,14 @@ async fn saved_config(service: &Service, connection_id: &str) -> Result<serde_js
 #[allow(dead_code)]
 fn json_string(body: &str) -> String {
     serde_json::from_str::<String>(body).unwrap_or_else(|_| body.trim_matches('"').to_owned())
+}
+
+fn new_connection_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    format!("nsh-sqlserver-{}-{nanos}", std::process::id())
 }
 
 fn next_execution_id() -> String {

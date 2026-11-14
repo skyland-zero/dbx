@@ -70,7 +70,7 @@ cargo test -p dbx-native    # starts the loopback server against a temp store
 
 | Gap | Why | Next |
 | --- | --- | --- |
-| Connections are created in the existing app | no connection form yet | §7 of the plan |
+| Only SQL Server has a form | this slice is SQL Server only | other drivers reuse `Dbx.save…` later |
 | The password field is a fallback | saved passwords come from the keychain; typing one overrides it for the session | — |
 | Tabs cannot be closed and do not drag | the strip is fixed tabs, per M4 | add close/reorder in a later slice |
 | 1:1 with the Vue UI is underway | colours and radius come from `theme.json`, generated from the Vue app's `tokens.css`; fonts, icons and the screenshot baseline are still missing | §8 of the plan: bundle the fonts, reuse the SVG sources, add screenshot diff |
