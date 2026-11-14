@@ -19,6 +19,11 @@ license = "Apache-2.0"
 # APIs only those revisions have.
 [patch.crates-io]
 tiberius = { path = "../../vendor/tiberius" }
+# NSH's QuickJS runtime pulls stable ecdsa/rsa/pkcs crates, which rules out
+# russh 0.60.3 (it pins ecdsa 0.17.0-rc.16). The generated workspace therefore
+# resolves russh 0.60.1; this copy adapts its two calls to the stable pkcs1 /
+# pkcs5 APIs. See vendor/russh/DBX-PATCH.md.
+russh = { path = "../../vendor/russh" }
 mysql_async = { git = "https://github.com/t8y2/mysql_async.git", rev = "4cd84d86bb86b060320ce3459561e8093e4422fa" }
 tokio-postgres = { git = "https://github.com/t8y2/tokio-postgres-gaussdb.git", rev = "5f37ebd1ae8e2c81ac07b89a046c9319f7a1bc89" }
 postgres-types = { git = "https://github.com/t8y2/tokio-postgres-gaussdb.git", rev = "5f37ebd1ae8e2c81ac07b89a046c9319f7a1bc89" }

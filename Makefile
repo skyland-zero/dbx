@@ -3,7 +3,7 @@
 PNPM ?= pnpm
 TAURI_DEV_PORT ?= 1420
 
-.PHONY: help install docs-install check-tauri-dev-port dev dev-fast dev-web dev-backend nsh-dev nsh-check build package clean docs docs-build check test cargo-check-fast cargo-test-fast db db-list db-verify db-down db-reset db-check db-completion
+.PHONY: help install docs-install check-tauri-dev-port dev dev-fast dev-web dev-backend nsh-dev nsh-windows nsh-check build package clean docs docs-build check test cargo-check-fast cargo-test-fast db db-list db-verify db-down db-reset db-check db-completion
 
 export DB
 export DB_VERSION
@@ -94,6 +94,11 @@ dev-backend: node_modules/.modules.yaml
 # See docs/nsh-gui-migration.md.
 nsh-dev:
 	cd apps/nsh && nsh run
+
+# Windows needs the MSVC environment, a full Perl, a pinned toolchain and a
+# seeded lock; the script carries them (docs/nsh-gui-migration.md).
+nsh-windows:
+	pwsh -NoProfile -ExecutionPolicy Bypass -File apps/nsh/run-windows.ps1
 
 nsh-check:
 	cd apps/nsh && cargo check --workspace

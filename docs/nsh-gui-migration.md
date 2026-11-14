@@ -20,6 +20,7 @@
 | 新建连接 | **已完成**：应用内表单写入 `dbx.db`（payload 已用真实 `dbx-web` 二进制验证） |
 | `serve()` 回归 | 已用构建出的 `dbx-web` 二进制冒烟：`/api/version` 200、`/api/connection/list` `[]`、保存后再列出、`/query/execute` 走到 tiberius 并返回预期连接错误 |
 | 1:1 视觉还原（字体、图标、截图基线） | 未开始（§8） |
+| Windows 开发运行 | **已打通**：`pwsh apps/nsh/run-windows.ps1`；窗口启动，连接列表读到 `dbx.db` |
 | 运行说明 | `apps/nsh/README.md` |
 
 复现验证：
@@ -46,7 +47,31 @@ cd apps/nsh && cargo test -p dbx-native  # 进程内服务 + /api/connection/lis
 | B. 纯 Rust 根（`"root"`） | 放弃 TSX 页面，`cargo run` 直接在我们的 workspace 里进桌面后端（nsh 文档明确支持） | 失去 TSX 热更新与"大部分页面 TSX" |
 | C. 全量 vendor | `cargo vendor` 整个依赖图 + `.cargo/config.toml` 的 source 替换，再把 fork 塞进 vendor 目录 | 仓库/缓存体积大，依赖每次变更都要重做 |
 
-在定案前 `apps/nsh` 的代码保留；`make nsh-dev` 会停在这个点（`cargo check` 与冒烟测试不受影响）。
+### 本分支的 Windows 绕行（2026-11-14）
+
+在等上游方案 A 期间，Windows 开发运行已用下面几处绕行打通（入口是
+`apps/nsh/run-windows.ps1`，`cargo check` 与冒烟测试不受影响）：
+
+1. `apps/nsh/.cargo/config.toml` 重复 `[patch.crates-io]`：Cargo 从
+   `.nsh/rust` 向上读配置，生成 workspace 也能拿到这些 patch。
+2. 启动前把 `apps/nsh/Cargo.lock` 种到 `.nsh/rust/Cargo.lock`。
+3. `vendor/russh` 固定 0.60.1，并把两处调用改到稳定的 `pkcs1`/`pkcs5`
+   API。原因：nsh 的 QuickJS crypto 需要稳定版 `ecdsa`/`rsa`，而
+   `russh 0.60.3` 精确锁 `ecdsa 0.17.0-rc.16`，两者不能在同一 workspace
+   共存。
+4. `RUSTUP_TOOLCHAIN=stable`：`ff 0.14.0` 自带 `rust-toolchain.toml` 固定
+   1.85.0，会和 1.99.1 编出的依赖元数据冲突。
+5. `CARGO_PROFILE_DEV_DEBUG=line-tables-only`：`libdbx_web.rlib` 在完整
+   debug info 下有 4.4 GB，超过 `rust-lld` 的 4 GiB 归档限制；line tables
+   把它降到约 0.5 GB。
+6. 脚本准备 MSVC 开发者环境和一个完整 Perl（Strawberry；Git for Windows
+   自带的 Perl 缺 `ExtUtils::MakeMaker`），并用 `rustup which cargo`
+   避开本机自定义 Cargo 的共享 target（check/build 产物混用会触发
+   `component` 宏的 `core` 元数据错误）。
+
+在定案前 `apps/nsh` 的代码保留；Windows 用 `make nsh-windows` 或
+`apps/nsh/run-windows.ps1`，`make nsh-dev` 仍是裸 `nsh run`，需要自行准备
+上面的环境。上游方案 A 仍是正式解。
 
 ## 1. 背景
 

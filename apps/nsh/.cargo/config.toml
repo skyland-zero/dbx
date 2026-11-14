@@ -1,0 +1,16 @@
+# `nsh` writes `.nsh/rust` as a workspace of its own and rewrites its
+# Cargo.toml on every command, so the patches in `apps/nsh/Cargo.toml` never
+# reach the generated hosts. Cargo reads this file from the app directory and
+# from `.nsh/rust` (its parent), so both workspaces resolve the same patched
+# drivers.
+#
+# Keep this table in sync with the `[patch.crates-io]` table in
+# `apps/nsh/Cargo.toml`; `cargo test`/`nsh check` use that manifest, while
+# `nsh run`/`nsh build` use the generated workspace.
+[patch.crates-io]
+tiberius = { path = "../../vendor/tiberius" }
+russh = { path = "../../vendor/russh" }
+mysql_async = { git = "https://github.com/t8y2/mysql_async.git", rev = "4cd84d86bb86b060320ce3459561e8093e4422fa" }
+tokio-postgres = { git = "https://github.com/t8y2/tokio-postgres-gaussdb.git", rev = "5f37ebd1ae8e2c81ac07b89a046c9319f7a1bc89" }
+postgres-types = { git = "https://github.com/t8y2/tokio-postgres-gaussdb.git", rev = "5f37ebd1ae8e2c81ac07b89a046c9319f7a1bc89" }
+postgres-protocol = { git = "https://github.com/t8y2/tokio-postgres-gaussdb.git", rev = "5f37ebd1ae8e2c81ac07b89a046c9319f7a1bc89" }

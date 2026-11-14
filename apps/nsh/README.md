@@ -58,6 +58,30 @@ builds with the default toolchain, so `rustup default 1.99.1` or
 platform's toolchain (Xcode / WebView2 / GTK 4.14+ — see
 [nsh's installation page](https://nsh.dev/docs/installation)).
 
+### Windows
+
+```powershell
+pwsh ./run-windows.ps1
+```
+
+`nsh run` alone is not enough on Windows for now:
+
+- `dbx-drivers` builds vendored OpenSSL for PostgreSQL, so a full Perl
+  (`ExtUtils::MakeMaker`) and the MSVC developer environment are required.
+  Git for Windows' Perl is too minimal; install Strawberry Perl, or point
+  `NSH_PERL` at one.
+- `ff` 0.14.0 (a dependency) ships a `rust-toolchain.toml` pinning Rust
+  1.85.0; the script sets `RUSTUP_TOOLCHAIN=stable` so the graph uses 1.99.1.
+- `libdbx_web.rlib` passes 4 GiB with full debug info and `rust-lld` cannot
+  read the archive; the script sets `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.
+- `nsh` rewrites `.nsh/rust/Cargo.toml`, so `apps/nsh/.cargo/config.toml`
+  repeats the driver patches, and the script seeds `.nsh/rust/Cargo.lock` from
+  the app's lock. `vendor/russh` carries the 0.60.1 compatibility fix that
+  nsh's stable QuickJS crypto graph forces.
+
+The long form is in
+[`docs/nsh-gui-migration.md`](../../docs/nsh-gui-migration.md).
+
 Type-check the Rust side without a window:
 
 ```sh
