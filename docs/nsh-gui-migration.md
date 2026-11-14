@@ -29,6 +29,25 @@ cargo check -p dbx-web --lib          # 根 workspace
 cd apps/nsh && cargo test -p dbx-native  # 进程内服务 + /api/connection/list
 ```
 
+## 已知阻塞：`nsh build` / `nsh run` 的生成 workspace
+
+`nsh` 会为应用的 Rust crate 生成 `.nsh/rust/`（独立 workspace：`describe`、`test`、各平台 host），它：
+
+1. **每次运行重写** `.nsh/rust/Cargo.toml`，手工加入的 `[patch.crates-io]` 会被丢弃；
+2. 用它自己的 `Cargo.lock` 解析依赖：实测 `mysql_async 0.37.1`（registry，不是 fork）、`russh 0.60.1` / `pkcs5 0.8.1`，而根仓库锁的是 `russh 0.60.3` / `pkcs5 0.8.0-rc.13`。
+
+结果：`nsh build` / `nsh run` 在 `russh` 编译失败（`pkcs1` API 不匹配）；手动注入 patch + 复制 `Cargo.lock` 也会被重新解析。`nsh check` 能通过，因为它检查的是我们 workspace 里的 crate。
+
+三种解法：
+
+| 方案 | 做法 | 代价 |
+| --- | --- | --- |
+| **A. 打补丁的 nsh（推荐）** | 上游几十行：生成 workspace 时带上应用 crate 的 `[patch.crates-io]`，并用应用的 `Cargo.lock` 作为种子；用 `--nsh-source` 构建 | 约 1 天 + 后续维护 |
+| B. 纯 Rust 根（`"root"`） | 放弃 TSX 页面，`cargo run` 直接在我们的 workspace 里进桌面后端（nsh 文档明确支持） | 失去 TSX 热更新与"大部分页面 TSX" |
+| C. 全量 vendor | `cargo vendor` 整个依赖图 + `.cargo/config.toml` 的 source 替换，再把 fork 塞进 vendor 目录 | 仓库/缓存体积大，依赖每次变更都要重做 |
+
+在定案前 `apps/nsh` 的代码保留；`make nsh-dev` 会停在这个点（`cargo check` 与冒烟测试不受影响）。
+
 ## 1. 背景
 
 | 现状 | 规模 |
