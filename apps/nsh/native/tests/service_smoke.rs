@@ -23,6 +23,24 @@ fn starts_db_web_and_lists_the_saved_connections() {
     let parsed: serde_json::Value = serde_json::from_str(&listing).expect("the server answers with JSON");
     assert!(parsed.is_array(), "a fresh store lists no connections: {listing}");
 
+    // A connection made in this GUI lands in the same store the list reads.
+    let id = runtime
+        .block_on(dbx_native::service::save_sql_server_connection_inner(
+            "smoke".to_owned(),
+            "127.0.0.1".to_owned(),
+            59999,
+            "sa".to_owned(),
+            "secret".to_owned(),
+            "master".to_owned(),
+        ))
+        .expect("save a SQL Server connection");
+    let listing = runtime.block_on(dbx_native::service::list_connections_for_test()).expect("list connections");
+    let parsed: serde_json::Value = serde_json::from_str(&listing).expect("the server answers with JSON");
+    assert!(
+        parsed.as_array().is_some_and(|list| list.iter().any(|config| config["id"] == id.as_str())),
+        "the saved connection is listed: {listing}"
+    );
+
     // The query route is reached through the same router: an unsaved id is
     // refused before any database is dialled.
     let error = runtime
